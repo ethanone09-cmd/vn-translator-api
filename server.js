@@ -119,6 +119,14 @@ function pcm16ToWavBuffer(
   return buffer
 }
 
+function containsLatinOrVietnameseLetters(text) {
+  return /[A-Za-zÀ-ỹà-ỹĂăÂâĐđÊêÔôƠơƯư]/.test(String(text || ''))
+}
+
+function safeTrim(value) {
+  return String(value || '').trim()
+}
+
 async function buildReplyMeaningAndPronunciation(recognizedText, translatedText) {
   if (!recognizedText && !translatedText) {
     return {
@@ -147,8 +155,19 @@ Return JSON only with exactly this schema:
 Rules:
 - autoReply: one short and natural Vietnamese reply suitable for the conversation context.
 - meaningText: one short Chinese explanation / Chinese meaning of the Vietnamese sentence.
-- pronunciationText: one short Chinese pronunciation aid for the Vietnamese sentence, using simple Chinese characters to approximately represent the Vietnamese pronunciation.
-- All three fields must be concise and suitable for a small HUD display.
+- pronunciationText: must be a Chinese-character pronunciation aid for the Vietnamese sentence.
+- pronunciationText must use only simplified Chinese characters and common Chinese punctuation.
+- Do NOT use Vietnamese spelling.
+- Do NOT use Latin letters.
+- Do NOT use pinyin.
+- Do NOT use IPA.
+- Do NOT use tone marks.
+- Do NOT use romanization.
+- pronunciationText should look like how a Chinese speaker can approximately read the Vietnamese sentence aloud.
+- Example:
+  Vietnamese: "Xin chào"
+  pronunciationText: "新早"
+- Keep all fields short and suitable for a small HUD display.
 - Do not include markdown.
 - Do not include any extra keys.
 - Return valid JSON only.
@@ -159,14 +178,23 @@ Rules:
     input: enrichPrompt,
   })
 
-  const raw = String(enrichResp.output_text || '').trim()
+  const raw = safeTrim(enrichResp.output_text)
 
   try {
     const parsed = JSON.parse(raw)
+
+    const autoReply = safeTrim(parsed.autoReply)
+    const meaningText = safeTrim(parsed.meaningText)
+    const pronunciationTextRaw = safeTrim(parsed.pronunciationText)
+
+    const pronunciationText = containsLatinOrVietnameseLetters(pronunciationTextRaw)
+      ? ''
+      : pronunciationTextRaw
+
     return {
-      autoReply: String(parsed.autoReply || '').trim(),
-      meaningText: String(parsed.meaningText || '').trim(),
-      pronunciationText: String(parsed.pronunciationText || '').trim(),
+      autoReply,
+      meaningText,
+      pronunciationText,
     }
   } catch (error) {
     console.error('[ENRICH] parse error:', error)
