@@ -119,55 +119,36 @@ function pcm16ToWavBuffer(
   return buffer
 }
 
-function containsLatinOrVietnameseLetters(text) {
-  return /[A-Za-zÀ-ỹà-ỹĂăÂâĐđÊêÔôƠơƯư]/.test(String(text || ''))
-}
-
-function safeTrim(value) {
-  return String(value || '').trim()
-}
-
-async function buildReplyMeaningAndPronunciation(recognizedText, translatedText) {
+async function buildReplyBundle(recognizedText, translatedText) {
   if (!recognizedText && !translatedText) {
     return {
-      autoReply: '',
-      meaningText: '',
-      pronunciationText: '',
+      replyChinese: '',
+      replyVietnamese: '',
+      replyPronunciation: '',
     }
   }
 
   const enrichPrompt = `
 You are helping build live smart-glasses translation output.
 
-Input Chinese:
+User utterance:
 ${recognizedText}
 
-Vietnamese translation:
+Its translation:
 ${translatedText}
 
 Return JSON only with exactly this schema:
 {
-  "autoReply": "...",
-  "meaningText": "...",
-  "pronunciationText": "..."
+  "replyChinese": "...",
+  "replyVietnamese": "...",
+  "replyPronunciation": "..."
 }
 
 Rules:
-- autoReply: one short and natural Vietnamese reply suitable for the conversation context.
-- meaningText: one short Chinese explanation / Chinese meaning of the Vietnamese sentence.
-- pronunciationText: must be a Chinese-character pronunciation aid for the Vietnamese sentence.
-- pronunciationText must use only simplified Chinese characters and common Chinese punctuation.
-- Do NOT use Vietnamese spelling.
-- Do NOT use Latin letters.
-- Do NOT use pinyin.
-- Do NOT use IPA.
-- Do NOT use tone marks.
-- Do NOT use romanization.
-- pronunciationText should look like how a Chinese speaker can approximately read the Vietnamese sentence aloud.
-- Example:
-  Vietnamese: "Xin chào"
-  pronunciationText: "新早"
-- Keep all fields short and suitable for a small HUD display.
+- replyChinese: one short, natural Chinese reply suitable for the conversation context.
+- replyVietnamese: translate replyChinese into short, natural Vietnamese.
+- replyPronunciation: use simple Chinese characters to approximately represent the pronunciation of replyVietnamese.
+- Keep all fields concise and suitable for a small HUD display.
 - Do not include markdown.
 - Do not include any extra keys.
 - Return valid JSON only.
@@ -178,31 +159,22 @@ Rules:
     input: enrichPrompt,
   })
 
-  const raw = safeTrim(enrichResp.output_text)
+  const raw = String(enrichResp.output_text || '').trim()
 
   try {
     const parsed = JSON.parse(raw)
-
-    const autoReply = safeTrim(parsed.autoReply)
-    const meaningText = safeTrim(parsed.meaningText)
-    const pronunciationTextRaw = safeTrim(parsed.pronunciationText)
-
-    const pronunciationText = containsLatinOrVietnameseLetters(pronunciationTextRaw)
-      ? ''
-      : pronunciationTextRaw
-
     return {
-      autoReply,
-      meaningText,
-      pronunciationText,
+      replyChinese: String(parsed.replyChinese || '').trim(),
+      replyVietnamese: String(parsed.replyVietnamese || '').trim(),
+      replyPronunciation: String(parsed.replyPronunciation || '').trim(),
     }
   } catch (error) {
     console.error('[ENRICH] parse error:', error)
     console.error('[ENRICH] raw output:', raw)
     return {
-      autoReply: '',
-      meaningText: '',
-      pronunciationText: '',
+      replyChinese: '',
+      replyVietnamese: '',
+      replyPronunciation: '',
     }
   }
 }
@@ -220,13 +192,13 @@ async function transcribeAndTranslateFromWav(wavPath) {
     return {
       recognizedText: '',
       translatedText: '',
-      autoReply: '',
-      meaningText: '',
-      pronunciationText: '',
+      replyChinese: '',
+      replyVietnamese: '',
+      replyPronunciation: '',
     }
   }
 
-  const translationPrompt = `Translate the following Chinese text into natural Vietnamese. Return only the Vietnamese translation.\n\n${recognizedText}`
+  const translationPrompt = `Translate the following text. If the input is Chinese, translate it into natural Vietnamese. If the input is Vietnamese, translate it into natural Chinese. Return only the translated text.\n\n${recognizedText}`
 
   const translationResp = await openai.responses.create({
     model: 'gpt-4.1-mini',
@@ -236,17 +208,17 @@ async function transcribeAndTranslateFromWav(wavPath) {
   const translatedText = String(translationResp.output_text || '').trim()
 
   const {
-    autoReply,
-    meaningText,
-    pronunciationText,
-  } = await buildReplyMeaningAndPronunciation(recognizedText, translatedText)
+    replyChinese,
+    replyVietnamese,
+    replyPronunciation,
+  } = await buildReplyBundle(recognizedText, translatedText)
 
   return {
     recognizedText,
     translatedText,
-    autoReply,
-    meaningText,
-    pronunciationText,
+    replyChinese,
+    replyVietnamese,
+    replyPronunciation,
   }
 }
 
@@ -343,22 +315,22 @@ wss.on('connection', (ws, req) => {
             const {
               recognizedText,
               translatedText,
-              autoReply,
-              meaningText,
-              pronunciationText,
+              replyChinese,
+              replyVietnamese,
+              replyPronunciation,
             } = await transcribeAndTranslateFromWav(tempWavPath)
 
             console.log(
-              `[WS] final_result session=${session.sessionId} recognized="${recognizedText}" translated="${translatedText}" autoReply="${autoReply}" meaning="${meaningText}" pronunciation="${pronunciationText}"`
+              `[WS] final_result session=${session.sessionId} recognized="${recognizedText}" translated="${translatedText}" replyChinese="${replyChinese}" replyPronunciation="${replyPronunciation}" replyVietnamese="${replyVietnamese}"`
             )
 
             sendJson(ws, {
               type: 'final_result',
               recognizedText: recognizedText || '',
               translatedText: translatedText || '',
-              autoReply: autoReply || '',
-              meaningText: meaningText || '',
-              pronunciationText: pronunciationText || '',
+              replyChinese: replyChinese || '',
+              replyVietnamese: replyVietnamese || '',
+              replyPronunciation: replyPronunciation || '',
             })
           } catch (error) {
             console.error('[WS] ASR/translate error:', error)
